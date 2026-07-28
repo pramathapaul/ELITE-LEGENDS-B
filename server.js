@@ -58,9 +58,13 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/players', express.static(path.join(__dirname, 'player-images')));
+app.use('/auth', authRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/players', playerRoutes);
 app.use('/api/players', playerRoutes);
+app.use('/rooms', roomRoutes);
 app.use('/api/rooms', roomRoutes);
+app.use('/upload', uploadRoutes);
 app.use('/api/upload', uploadRoutes);
 
 app.get('/api/health', (req, res) => {
