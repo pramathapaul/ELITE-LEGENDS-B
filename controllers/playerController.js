@@ -65,9 +65,15 @@ export const getPlayerById = async (req, res) => {
   }
 };
 
+const normalizePlayerData = (playerData = {}) => ({
+  ...playerData,
+  image: playerData.image ?? '',
+  imageStatus: playerData.imageStatus && playerData.imageStatus !== '' ? playerData.imageStatus : 'pending',
+});
+
 export const createPlayer = async (req, res) => {
   try {
-    const player = await Player.create({ ...req.body, imageStatus: 'pending' });
+    const player = await Player.create(normalizePlayerData(req.body));
     triggerPlayerImageDownload(player._id);
     res.status(201).json(player);
   } catch (error) {
@@ -120,7 +126,7 @@ export const uploadPlayersBulk = async (req, res) => {
         continue;
       }
       try {
-        await Player.create(playerData);
+        await Player.create(normalizePlayerData(playerData));
         inserted++;
       } catch (err) {
         errors.push({ name: playerData.name, reason: err.message });

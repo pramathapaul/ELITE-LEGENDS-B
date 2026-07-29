@@ -2,6 +2,7 @@ import Room from '../models/Room.js';
 import Team from '../models/Team.js';
 import ChatMessage from '../models/ChatMessage.js';
 import Player from '../models/Player.js';
+import { reorderStartersByPosition } from '../controllers/roomController.js';
 
 const auctionTimers = new Map();
 const auctionState = new Map();
@@ -87,8 +88,10 @@ export const setupAuctionSocket = (io) => {
         }
 
         room.status = 'active';
+        room.phase = 'auction';
         room.currentPlayerIndex = 0;
         room.soldPlayers = [];
+        room.unsoldPlayers = [];
         await room.save();
 
         const currentPlayer = room.assignedPlayers[0];
@@ -153,6 +156,79 @@ export const setupAuctionSocket = (io) => {
       }
     });
 
+    socket.on('skip-player', async ({ roomId }) => {
+      try {
+        if (processingSales.has(roomId)) {
+          return socket.emit('error', { message: 'Sale already in progress for this room.' });
+        }
+
+        clearTimer(roomId);
+
+        const room = await Room.findById(roomId)
+          .populate('assignedPlayers')
+          .populate('participants.user', 'username email avatar');
+
+        if (!room || room.status !== 'active') return;
+
+        const state = auctionState.get(roomId);
+        const currentPlayer = room.assignedPlayers[room.currentPlayerIndex];
+        if (!currentPlayer) return;
+
+        io.to(roomId).emit('auction-closing', {
+          playerId: currentPlayer._id,
+          playerName: currentPlayer.name,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        room.unsoldPlayers.push({
+          player: currentPlayer._id,
+        });
+
+        room.currentPlayerIndex += 1;
+        await room.save();
+
+        auctionState.delete(roomId);
+
+        io.to(roomId).emit('player-unsold', {
+          player: currentPlayer,
+          room: await Room.findById(roomId)
+            .populate('assignedPlayers')
+            .populate('participants.user', 'username email avatar')
+            .populate('soldPlayers.player')
+            .populate('soldPlayers.winner', 'username'),
+        });
+
+        await ChatMessage.create({
+          room: roomId,
+          username: 'System',
+          message: `${currentPlayer.name} was skipped and marked as Unsold`,
+          type: 'notification',
+        });
+
+        if (room.currentPlayerIndex >= room.assignedPlayers.length) {
+          room.status = 'ended';
+          await room.save();
+          const endedRoom = await Room.findById(roomId)
+            .populate('assignedPlayers')
+            .populate('participants.user', 'username email avatar')
+            .populate('soldPlayers.player')
+            .populate('soldPlayers.winner', 'username');
+          io.to(roomId).emit('auction-ended', { room: endedRoom });
+          return;
+        }
+
+        const nextPlayer = room.assignedPlayers[room.currentPlayerIndex];
+        setTimeout(() => {
+          startPlayerAuction(io, roomId, nextPlayer, room.settings);
+        }, 2000);
+      } catch (error) {
+        socket.emit('error', { message: error.message });
+      } finally {
+        processingSales.delete(roomId);
+      }
+    });
+
     socket.on('pause-auction', async ({ roomId }) => {
       try {
         const room = await Room.findById(roomId);
@@ -190,9 +266,19 @@ export const setupAuctionSocket = (io) => {
         const room = await Room.findById(roomId);
         if (room) {
           room.status = 'ended';
+          room.phase = 'team_management';
+          room.locked = true;
           await room.save();
+
+          const updatedRoom = await Room.findById(roomId)
+            .populate('assignedPlayers')
+            .populate('participants.user', 'username email avatar')
+            .populate('soldPlayers.player')
+            .populate('soldPlayers.winner', 'username');
+
+          io.to(roomId).emit('auction-ended', { room: updatedRoom });
+          io.to(roomId).emit('auction-summary-open', { room: updatedRoom });
         }
-        io.to(roomId).emit('auction-ended', { room });
       } catch (error) {
         socket.emit('error', { message: error.message });
       }
@@ -242,6 +328,7 @@ export const setupAuctionSocket = (io) => {
         room.assignedPlayers = randomPlayers.map(p => p._id);
         room.currentPlayerIndex = 0;
         room.soldPlayers = [];
+        room.unsoldPlayers = [];
         await room.save();
 
         const populated = await Room.findById(roomId).populate('assignedPlayers');
@@ -380,6 +467,13 @@ const finalizePlayerSale = async (io, roomId) => {
         team.totalRating += currentPlayer.overall;
         await team.save();
 
+        const f = team.formation || '4-3-3';
+        const reordered = reorderStartersByPosition(team.players, f);
+        if (reordered.length > 0) {
+          team.players = reordered;
+          await team.save();
+        }
+
         const populatedTeam = await Team.findById(team._id).populate('players.player');
         io.to(roomId).emit('team-updated', {
           userId: highestBidderId.toString(),
@@ -420,6 +514,11 @@ const finalizePlayerSale = async (io, roomId) => {
         type: 'notification',
       });
     } else {
+      room.unsoldPlayers.push({
+        player: currentPlayer._id,
+      });
+      await room.save();
+
       io.to(roomId).emit('player-unsold', {
         player: currentPlayer,
         room: updatedRoom,
@@ -428,8 +527,16 @@ const finalizePlayerSale = async (io, roomId) => {
 
     if (room.currentPlayerIndex >= room.assignedPlayers.length) {
       room.status = 'ended';
+      room.phase = 'team_management';
+      room.locked = true;
       await room.save();
-      io.to(roomId).emit('auction-ended', { room: updatedRoom });
+      const finalRoom = await Room.findById(roomId)
+        .populate('assignedPlayers')
+        .populate('participants.user', 'username email avatar')
+        .populate('soldPlayers.player')
+        .populate('soldPlayers.winner', 'username');
+      io.to(roomId).emit('auction-ended', { room: finalRoom });
+      io.to(roomId).emit('auction-summary-open', { room: finalRoom });
       return;
     }
 

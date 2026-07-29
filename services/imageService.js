@@ -22,50 +22,123 @@ function slugify(name) {
 }
 
 async function searchWikimedia(searchName) {
-  const params = new URLSearchParams({
-    action: 'query',
-    generator: 'search',
-    gsrsearch: `${searchName} footballer`,
-    gsrnamespace: '6',
-    gsrlimit: '5',
-    prop: 'imageinfo',
-    iiprop: 'url',
-    iiurlwidth: '800',
-    format: 'json',
-    origin: '*',
-  });
+  const searches = [
+    `${searchName} portrait footballer`,
+    `${searchName} footballer`,
+    searchName,
+  ];
 
-  const response = await fetch(`${WIKIMEDIA_API}?${params}`, {
-    headers: { 'User-Agent': 'FootballAuctionApp/1.0 (football@auction.app)' },
-  });
-  if (!response.ok) return null;
+  let pages = [];
 
-  const data = await response.json();
-  const pages = data.query?.pages;
-  if (!pages) return null;
+  for (const query of searches) {
+    const params = new URLSearchParams({
+      action: 'query',
+      generator: 'search',
+      gsrsearch: query,
+      gsrnamespace: '6',
+      gsrlimit: '10',
+      prop: 'imageinfo',
+      iiprop: 'url|size',
+      iiurlwidth: '1000',
+      format: 'json',
+      origin: '*',
+    });
 
-  const entries = Object.values(pages);
-  const firstNameLower = searchName.split(' ')[0]?.toLowerCase();
+    const response = await fetch(`${WIKIMEDIA_API}?${params}`, {
+      headers: {
+        'User-Agent': 'FootballAuctionApp/1.0 (football@auction.app)',
+      },
+    });
+
+    if (!response.ok) continue;
+
+    const data = await response.json();
+
+    if (data.query?.pages) {
+      pages = Object.values(data.query.pages);
+      if (pages.length) break;
+    }
+  }
+
+  if (!pages.length) return null;
+
+  const fullName = searchName.toLowerCase();
+
+  const positiveKeywords = [
+    'cropped',
+    'portrait',
+    'headshot',
+    '2022',
+    '2021',
+    '2020',
+    '2019',
+    '2018',
+    'fifa',
+    'world cup',
+  ];
+
+  const negativeKeywords = [
+    'penalty',
+    'goal',
+    'celebration',
+    'training',
+    'warmup',
+    'match',
+    'vs',
+    'stadium',
+    'signature',
+    'firma',
+    'autograph',
+    'logo',
+    'flag',
+    'team',
+    'squad',
+    'lineup',
+    'kit launch',
+  ];
 
   let best = null;
-  let bestScore = -1;
+  let bestScore = -99999;
 
-  for (const page of entries) {
-    const info = page?.imageinfo?.[0];
+  for (const page of pages) {
+    const info = page.imageinfo?.[0];
     if (!info?.url) continue;
-    const url = info.url.startsWith('//') ? 'https:' + info.url : info.url;
-    const title = (page.title || '').replace('File:', '').toLowerCase();
-    const desc = page.description?.toLowerCase() || '';
+
+    const url = info.url.startsWith('//')
+      ? `https:${info.url}`
+      : info.url;
+
+    const ext = path.extname(url).toLowerCase();
+
+    if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) continue;
+
+    const title = (page.title || '')
+      .replace(/^File:/i, '')
+      .toLowerCase();
 
     let score = 0;
-    if (title.includes(firstNameLower)) score += 3;
-    if (title.includes('portrait')) score += 2;
-    if (desc.includes('football') || desc.includes('soccer')) score += 1;
-    if (title.includes(searchName.toLowerCase())) score += 5;
 
-    const imgExt = path.extname(url).toLowerCase();
-    if (['.jpg', '.jpeg', '.png'].includes(imgExt)) score += 1;
-    if (info.width && info.width > 400) score += 1;
+    if (title.includes(fullName)) score += 100;
+
+    for (const part of fullName.split(' ')) {
+      if (title.includes(part)) score += 15;
+    }
+
+    for (const keyword of positiveKeywords) {
+      if (title.includes(keyword)) score += 25;
+    }
+
+    for (const keyword of negativeKeywords) {
+      if (title.includes(keyword)) score -= 40;
+    }
+
+    if (info.width > 1500) score += 25;
+    else if (info.width > 1000) score += 15;
+    else if (info.width > 700) score += 10;
+
+    if (info.height > 1000) score += 5;
+
+    if (info.height > info.width) score += 10;
 
     if (score > bestScore) {
       bestScore = score;
@@ -73,9 +146,7 @@ async function searchWikimedia(searchName) {
     }
   }
 
-  return best || (entries[0]?.imageinfo?.[0]?.url
-    ? (entries[0].imageinfo[0].url.startsWith('//') ? 'https:' + entries[0].imageinfo[0].url : entries[0].imageinfo[0].url)
-    : null);
+  return best;
 }
 
 async function downloadAndConvert(imageUrl, outputPath) {

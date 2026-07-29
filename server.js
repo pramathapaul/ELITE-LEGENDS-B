@@ -12,6 +12,8 @@ import roomRoutes from './routes/rooms.js';
 import uploadRoutes from './routes/upload.js';
 import { setupAuctionSocket } from './socket/auctionHandler.js';
 import Player from './models/Player.js';
+import Manager, { managersData } from './models/Manager.js';
+import { downloadMissingImages } from './services/imageService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -77,6 +79,16 @@ const PORT = process.env.PORT || 5000;
 
 connectDB().then(async () => {
   try {
+    const managerCount = await Manager.countDocuments();
+    if (managerCount === 0) {
+      await Manager.insertMany(managersData);
+      console.log(`Seeded ${managersData.length} managers`);
+    }
+  } catch (err) {
+    console.error('Manager seeding error:', err.message);
+  }
+
+  try {
     const result = await Player.updateMany(
       { imageStatus: { $exists: false } },
       { $set: { imageStatus: 'pending' } }
@@ -91,6 +103,16 @@ connectDB().then(async () => {
   server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Socket.IO ready for real-time connections`);
+
+    setTimeout(async () => {
+      try {
+        const pendingCount = await Player.countDocuments({ imageStatus: 'pending' });
+        if (pendingCount > 0) {
+          console.log(`Starting image download for ${pendingCount} players...`);
+          downloadMissingImages().catch(err => console.error('Image download error:', err.message));
+        }
+      } catch (e) {}
+    }, 2000);
   });
 });
 
