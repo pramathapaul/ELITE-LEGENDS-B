@@ -19,6 +19,10 @@ const playerSchema = new mongoose.Schema({
     required: true,
     enum: ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'],
   },
+  secondaryPositions: {
+    type: [String],
+    default: [],
+  },
   preferredFoot: {
     type: String,
     enum: ['Left', 'Right', 'Both'],
@@ -67,7 +71,7 @@ const playerSchema = new mongoose.Schema({
   positionColor: { type: String, default: '' },
   rarity: {
     type: String,
-    enum: ['Legend', 'Icon', 'Hero', 'Common'],
+    enum: ['Ultimate Legend', 'Mythic', 'Legend', 'Icon', 'Hero'],
     default: 'Legend',
   },
   isAuctioned: {

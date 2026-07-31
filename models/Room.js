@@ -24,6 +24,11 @@ const roomSchema = new mongoose.Schema({
     enum: ['waiting', 'starting', 'active', 'paused', 'ended'],
     default: 'waiting',
   },
+  phase: {
+    type: String,
+    enum: ['auction', 'team_management', 'complete'],
+    default: 'auction',
+  },
   settings: {
     maxParticipants: { type: Number, default: 10, min: 2, max: 50 },
     squadSize: { type: Number, default: 30, min: 5, max: 80 },
@@ -65,6 +70,18 @@ const roomSchema = new mongoose.Schema({
     winningBid: { type: Number },
     soldAt: { type: Date, default: Date.now },
   }],
+  unsoldPlayers: [{
+    player: { type: mongoose.Schema.Types.ObjectId, ref: 'Player' },
+    skippedAt: { type: Date, default: Date.now },
+  }],
+  squadConfirmedCount: {
+    type: Number,
+    default: 0,
+  },
+  allSquadsConfirmed: {
+    type: Boolean,
+    default: false,
+  },
 }, {
   timestamps: true,
 });
